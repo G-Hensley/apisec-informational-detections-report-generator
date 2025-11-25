@@ -1,0 +1,260 @@
+"use client";
+
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { ReportConfig } from "@/lib/types";
+import { fetchReportData, ApiSecError } from "@/lib/apisec-client";
+import { FileDown, Loader2 } from "lucide-react";
+
+interface GenerationState {
+  isGenerating: boolean;
+  progress: number;
+  message: string;
+  error: string | null;
+}
+
+export function ReportForm() {
+  const [config, setConfig] = useState<ReportConfig>({
+    token: "",
+    tenant: "cloud",
+    appId: "",
+    instanceId: "",
+    scanId: "",
+    includeHttpLogs: false,
+    includeInformational: true,
+  });
+
+  const [state, setState] = useState<GenerationState>({
+    isGenerating: false,
+    progress: 0,
+    message: "",
+    error: null,
+  });
+
+  const updateConfig = <K extends keyof ReportConfig>(
+    key: K,
+    value: ReportConfig[K]
+  ) => {
+    setConfig((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setState({ isGenerating: true, progress: 0, message: "Starting...", error: null });
+
+    try {
+      // Step 1: Fetch scan data and logs from API
+      const { scanResults, detectionLogsMap, detectionToFindingMap } = await fetchReportData(
+        config.token,
+        config.tenant,
+        config.appId,
+        config.instanceId,
+        config.scanId,
+        config.includeHttpLogs,
+        (message, percent) => {
+          // Scale fetch progress to 0-60%
+          setState((prev) => ({ ...prev, message, progress: Math.round(percent * 0.6) }));
+        }
+      );
+
+      setState((prev) => ({ ...prev, message: "Generating PDF...", progress: 65 }));
+
+      // Step 2: Generate PDF (dynamic import for client-side only)
+      const { generatePDF } = await import("@/lib/pdf-generator");
+      await generatePDF({
+        scanResults,
+        detectionLogsMap,
+        detectionToFindingMap,
+        includeInformational: config.includeInformational,
+        onProgress: (message, percent) => {
+          // Scale PDF progress to 65-100%
+          const scaledPercent = 65 + Math.round(percent * 0.35);
+          setState((prev) => ({ ...prev, message, progress: scaledPercent }));
+        },
+      });
+
+      setState({
+        isGenerating: false,
+        progress: 100,
+        message: "Report downloaded!",
+        error: null,
+      });
+    } catch (error) {
+      console.error("Generation error:", error);
+      let errorMessage = "An unexpected error occurred";
+
+      if (error instanceof ApiSecError) {
+        if (error.status === 401) {
+          errorMessage = "Authentication failed. Please check your token.";
+        } else if (error.status === 404) {
+          errorMessage = "Resource not found. Please verify your IDs.";
+        } else {
+          errorMessage = error.message;
+        }
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+
+      setState({
+        isGenerating: false,
+        progress: 0,
+        message: "",
+        error: errorMessage,
+      });
+    }
+  };
+
+  const isValid =
+    config.token.trim() !== "" &&
+    config.appId.trim() !== "" &&
+    config.instanceId.trim() !== "" &&
+    config.scanId.trim() !== "";
+
+  return (
+    <Card className="w-full max-w-2xl mx-auto">
+      <CardHeader>
+        <CardTitle>APIsec Report Generator</CardTitle>
+        <CardDescription>
+          Generate PDF vulnerability reports from APIsec scan data
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-2">
+            <Label htmlFor="token">Auth Token</Label>
+            <Textarea
+              id="token"
+              placeholder="Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6Ikp..."
+              value={config.token}
+              onChange={(e) => updateConfig("token", e.target.value)}
+              className="font-mono text-sm min-h-[80px]"
+            />
+            <p className="text-xs text-muted-foreground">
+              Paste your Bearer token from the APIsec Network tab
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="tenant">Tenant</Label>
+            <Input
+              id="tenant"
+              placeholder="cloud"
+              value={config.tenant}
+              onChange={(e) => updateConfig("tenant", e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Your APIsec tenant name (e.g., cloud, bmo, infineon, or your custom tenant)
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="appId">Application ID</Label>
+            <Input
+              id="appId"
+              placeholder="019a5078-facf-7627-b23b-0137d701186d"
+              value={config.appId}
+              onChange={(e) => updateConfig("appId", e.target.value)}
+              className="font-mono"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="instanceId">Instance ID</Label>
+            <Input
+              id="instanceId"
+              placeholder="019a5079-10b7-7aae-ae6b-23b29998cd78"
+              value={config.instanceId}
+              onChange={(e) => updateConfig("instanceId", e.target.value)}
+              className="font-mono"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="scanId">Scan ID</Label>
+            <Input
+              id="scanId"
+              placeholder="019a507a-1234-5678-90ab-cdef12345678"
+              value={config.scanId}
+              onChange={(e) => updateConfig("scanId", e.target.value)}
+              className="font-mono"
+            />
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="includeHttpLogs"
+                checked={config.includeHttpLogs}
+                onCheckedChange={(checked) =>
+                  updateConfig("includeHttpLogs", checked === true)
+                }
+              />
+              <Label htmlFor="includeHttpLogs" className="text-sm font-normal">
+                Include HTTP Logs (slower, vulnerabilities only)
+              </Label>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="includeInformational"
+                checked={config.includeInformational}
+                onCheckedChange={(checked) =>
+                  updateConfig("includeInformational", checked === true)
+                }
+              />
+              <Label htmlFor="includeInformational" className="text-sm font-normal">
+                Include Informational Findings
+              </Label>
+            </div>
+          </div>
+
+          {state.error && (
+            <div className="p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md">
+              {state.error}
+            </div>
+          )}
+
+          {state.isGenerating && (
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span>{state.message}</span>
+                <span>{state.progress}%</span>
+              </div>
+              <Progress value={state.progress} />
+            </div>
+          )}
+
+          <Button
+            type="submit"
+            disabled={!isValid || state.isGenerating}
+            className="w-full"
+          >
+            {state.isGenerating ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Generating...
+              </>
+            ) : (
+              <>
+                <FileDown className="mr-2 h-4 w-4" />
+                Generate Report
+              </>
+            )}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
