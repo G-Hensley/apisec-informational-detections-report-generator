@@ -28,7 +28,7 @@ interface GenerationState {
 export function ReportForm() {
   const [config, setConfig] = useState<ReportConfig>({
     token: "",
-    tenant: "cloud",
+    tenant: "",
     appId: "",
     instanceId: "",
     scanId: "",
@@ -48,6 +48,18 @@ export function ReportForm() {
     value: ReportConfig[K]
   ) => {
     setConfig((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const resetForm = () => {
+    setConfig({
+      token: "",
+      tenant: "",
+      appId: "",
+      instanceId: "",
+      scanId: "",
+      includeHttpLogs: false,
+      includeInformational: true,
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -85,6 +97,8 @@ export function ReportForm() {
         },
       });
 
+      // Success - reset form and show completion message
+      resetForm();
       setState({
         isGenerating: false,
         progress: 100,
@@ -124,17 +138,17 @@ export function ReportForm() {
     (!config.includeInformational || config.scanId.trim() !== "");
 
   return (
-    <Card className="w-full max-w-2xl mx-auto">
+    <Card className="w-full max-w-2xl mx-auto bg-zinc-800 text-zinc-100 border-zinc-700">
       <CardHeader>
         <CardTitle>APIsec Report Generator</CardTitle>
-        <CardDescription>
+        <CardDescription className="text-zinc-400 border-b pb-1">
           Generate PDF vulnerability reports from APIsec scan data
         </CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Report Options - at the top */}
-          <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+          <div className="space-y-4 rounded-lg">
             <Label className="text-sm font-medium">Report Options</Label>
             <div className="flex items-center space-x-2">
               <Checkbox
@@ -177,7 +191,7 @@ export function ReportForm() {
               onChange={(e) => updateConfig("token", e.target.value)}
               className="font-mono text-sm min-h-20"
             />
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-zinc-400">
               Paste your Bearer token from the APIsec Network tab
             </p>
           </div>
@@ -190,8 +204,8 @@ export function ReportForm() {
               value={config.tenant}
               onChange={(e) => updateConfig("tenant", e.target.value)}
             />
-            <p className="text-xs text-muted-foreground">
-              Your APIsec tenant name (e.g., cloud, bmo, infineon, or your custom tenant)
+            <p className="text-xs text-zinc-400">
+              Your APIsec tenant name (e.g., &apos;cloud&apos; for cloud.apisec.com)
             </p>
           </div>
 
@@ -199,7 +213,7 @@ export function ReportForm() {
             <Label htmlFor="appId">Application ID</Label>
             <Input
               id="appId"
-              placeholder="019a5078-facf-7627-b23b-0137d701186d"
+              placeholder="0123abcd-45ef-67gh-89ij-klmnopqrstuv"
               value={config.appId}
               onChange={(e) => updateConfig("appId", e.target.value)}
               className="font-mono"
@@ -210,7 +224,7 @@ export function ReportForm() {
             <Label htmlFor="instanceId">Instance ID</Label>
             <Input
               id="instanceId"
-              placeholder="019a5079-10b7-7aae-ae6b-23b29998cd78"
+              placeholder="0123abcd-45ef-67gh-89ij-klmnopqrstuv"
               value={config.instanceId}
               onChange={(e) => updateConfig("instanceId", e.target.value)}
               className="font-mono"
@@ -222,7 +236,7 @@ export function ReportForm() {
               <Label htmlFor="scanId">Scan ID</Label>
               <Input
                 id="scanId"
-                placeholder="019a507a-1234-5678-90ab-cdef12345678"
+                placeholder="0123abcd-45ef-67gh-89ij-klmnopqrstuv"
                 value={config.scanId}
                 onChange={(e) => updateConfig("scanId", e.target.value)}
                 className="font-mono"
@@ -252,16 +266,16 @@ export function ReportForm() {
           <Button
             type="submit"
             disabled={!isValid || state.isGenerating}
-            className="w-full"
+            className="w-full flex items-center justify-center cursor-pointer bg-zinc-300 text-zinc-950 text-lg hover:bg-zinc-500"
           >
             {state.isGenerating ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <Loader2 size={24} className="animate-spin" />
                 Generating...
               </>
             ) : (
               <>
-                <FileDown className="mr-2 h-4 w-4" />
+                <FileDown size={24} />
                 Generate Report
               </>
             )}
