@@ -210,36 +210,67 @@ export class PDFReportGenerator {
   private renderSummary(summary: VulnerabilitySummary) {
     this.renderSectionTitle("Executive Summary");
 
-    const boxWidth = (CONTENT_WIDTH - 4 * 5) / 5; // 5 boxes with 5mm gaps
-    const boxHeight = 20;
-    const boxes = [
+    // Calculate vulnerabilities vs informational
+    const vulnCount = summary.critical + summary.high + summary.medium + summary.low;
+    const infoCount = summary.info;
+
+    // Summary text
+    this.doc.setFontSize(FONT_SIZE_NORMAL);
+    this.doc.setFont("helvetica", "normal");
+    this.doc.setTextColor(...COLORS.black);
+    this.doc.text(
+      `This scan identified ${vulnCount} vulnerabilit${vulnCount !== 1 ? "ies" : "y"} and ${infoCount} informational finding${infoCount !== 1 ? "s" : ""}.`,
+      MARGIN,
+      this.y
+    );
+    this.y += 10;
+
+    // Severity boxes - only show vulnerability severities (not info) in the main summary
+    const boxWidth = (CONTENT_WIDTH - 3 * 5) / 4; // 4 boxes with 5mm gaps
+    const boxHeight = 22;
+    const vulnBoxes = [
       { label: "CRITICAL", value: summary.critical, color: COLORS.critical },
       { label: "HIGH", value: summary.high, color: COLORS.high },
       { label: "MEDIUM", value: summary.medium, color: COLORS.medium },
       { label: "LOW", value: summary.low, color: COLORS.low },
-      { label: "INFO", value: summary.info, color: COLORS.info },
     ];
 
     let x = MARGIN;
-    for (const box of boxes) {
+    for (const box of vulnBoxes) {
       // Box background
       this.doc.setFillColor(...box.color);
       this.doc.roundedRect(x, this.y, boxWidth, boxHeight, 2, 2, "F");
 
       // Label
-      this.doc.setFontSize(7);
+      this.doc.setFontSize(8);
       this.doc.setFont("helvetica", "bold");
       this.doc.setTextColor(...COLORS.white);
-      this.doc.text(box.label, x + boxWidth / 2, this.y + 6, { align: "center" });
+      this.doc.text(box.label, x + boxWidth / 2, this.y + 7, { align: "center" });
 
       // Value
-      this.doc.setFontSize(16);
-      this.doc.text(String(box.value), x + boxWidth / 2, this.y + 15, { align: "center" });
+      this.doc.setFontSize(18);
+      this.doc.text(String(box.value), x + boxWidth / 2, this.y + 17, { align: "center" });
 
       x += boxWidth + 5;
     }
 
-    this.y += boxHeight + 10;
+    this.y += boxHeight + 5;
+
+    // Info box (separate, smaller)
+    if (infoCount > 0) {
+      const infoBoxWidth = 45;
+      this.doc.setFillColor(...COLORS.info);
+      this.doc.roundedRect(MARGIN, this.y, infoBoxWidth, 14, 2, 2, "F");
+
+      this.doc.setFontSize(8);
+      this.doc.setFont("helvetica", "bold");
+      this.doc.setTextColor(...COLORS.white);
+      this.doc.text(`INFORMATIONAL: ${infoCount}`, MARGIN + infoBoxWidth / 2, this.y + 9, { align: "center" });
+
+      this.y += 18;
+    } else {
+      this.y += 5;
+    }
   }
 
   private renderStatistics(data: PDFReportData) {
@@ -281,135 +312,221 @@ export class PDFReportGenerator {
   }
 
   private renderFindings(data: PDFReportData) {
-    this.renderSectionTitle("Findings");
+    const hasVulnerabilities = data.vulnerabilityGroups.length > 0;
+    const hasInformational = data.informationalGroups.length > 0;
 
-    if (data.endpointGroups.length === 0) {
+    // Render vulnerabilities section first
+    if (hasVulnerabilities) {
+      this.renderSectionTitle("Vulnerabilities");
+
+      // Count total vulns
+      const totalVulns = data.vulnerabilityGroups.reduce((sum, g) => sum + g.vulnerabilityCount, 0);
+      this.doc.setFontSize(FONT_SIZE_SMALL);
+      this.doc.setFont("helvetica", "normal");
+      this.doc.setTextColor(...COLORS.gray);
+      this.doc.text(`${totalVulns} vulnerability finding${totalVulns !== 1 ? "s" : ""} detected`, MARGIN, this.y);
+      this.y += 8;
+
+      for (const group of data.vulnerabilityGroups) {
+        this.renderEndpointGroup(group, false);
+      }
+    }
+
+    // Render informational section after vulnerabilities
+    if (hasInformational) {
+      // Add page break before informational if we had vulnerabilities
+      if (hasVulnerabilities) {
+        this.doc.addPage();
+        this.y = MARGIN;
+      }
+
+      this.renderSectionTitle("Informational Findings");
+
+      // Count total info findings
+      const totalInfo = data.informationalGroups.reduce((sum, g) => sum + g.vulnerabilityCount, 0);
+      this.doc.setFontSize(FONT_SIZE_SMALL);
+      this.doc.setFont("helvetica", "normal");
+      this.doc.setTextColor(...COLORS.gray);
+      this.doc.text(`${totalInfo} informational finding${totalInfo !== 1 ? "s" : ""} detected`, MARGIN, this.y);
+      this.y += 8;
+
+      for (const group of data.informationalGroups) {
+        this.renderEndpointGroup(group, true);
+      }
+    }
+
+    // No findings at all
+    if (!hasVulnerabilities && !hasInformational) {
+      this.renderSectionTitle("Findings");
       this.doc.setFontSize(FONT_SIZE_NORMAL);
       this.doc.setFont("helvetica", "italic");
       this.doc.setTextColor(...COLORS.gray);
       this.doc.text("No findings detected in this scan.", MARGIN, this.y);
-      return;
-    }
-
-    for (const group of data.endpointGroups) {
-      this.renderEndpointGroup(group);
     }
   }
 
-  private renderEndpointGroup(group: EndpointGroup) {
+  private renderEndpointGroup(group: EndpointGroup, isInformational: boolean = false) {
     // Check if we need a new page
     if (this.y > PAGE_HEIGHT - 60) {
       this.doc.addPage();
       this.y = MARGIN;
     }
 
-    // Endpoint header
-    this.doc.setFillColor(...COLORS.black);
+    // Endpoint header - use different color for informational
+    const headerColor = isInformational ? COLORS.info : COLORS.black;
+    this.doc.setFillColor(...headerColor);
     this.doc.roundedRect(MARGIN, this.y, CONTENT_WIDTH, 8, 1, 1, "F");
 
     this.doc.setFontSize(FONT_SIZE_SMALL);
     this.doc.setFont("helvetica", "bold");
     this.doc.setTextColor(...COLORS.white);
-    const headerText = `${group.endpoint} (${group.vulnerabilityCount} finding${group.vulnerabilityCount !== 1 ? "s" : ""})`;
+    const findingType = isInformational ? "info finding" : "finding";
+    const headerText = `${group.endpoint} (${group.vulnerabilityCount} ${findingType}${group.vulnerabilityCount !== 1 ? "s" : ""})`;
     this.doc.text(this.truncateText(headerText, CONTENT_WIDTH - 10), MARGIN + 4, this.y + 5.5);
     this.y += 12;
 
-    // Vulnerabilities
+    // Vulnerabilities/Findings
     for (const vuln of group.vulnerabilities) {
-      this.renderFinding(vuln);
+      this.renderFinding(vuln, isInformational);
     }
 
     this.y += 5;
   }
 
-  private renderFinding(vuln: VulnerabilityDetail) {
+  private renderFinding(vuln: VulnerabilityDetail, isInformational: boolean = false) {
     const severityColor = this.getSeverityColorRgb(vuln.severity);
-    const cardHeight = this.estimateCardHeight(vuln);
+    const contentX = MARGIN + 8;
+    const labelWidth = 22;
 
-    // Check if we need a new page
-    if (this.y + cardHeight > PAGE_HEIGHT - MARGIN) {
+    // Check if we need a new page before starting
+    if (this.y > PAGE_HEIGHT - 60) {
       this.doc.addPage();
       this.y = MARGIN;
     }
 
     const startY = this.y;
 
-    // Card background with severity border
-    this.doc.setFillColor(...COLORS.background);
-    this.doc.setDrawColor(...severityColor);
-    this.doc.setLineWidth(1);
-    this.doc.roundedRect(MARGIN, this.y, CONTENT_WIDTH, cardHeight, 2, 2, "FD");
+    // Draw colored severity bar on left (will extend as content grows)
+    const drawSeverityBar = (endY: number) => {
+      this.doc.setFillColor(...severityColor);
+      this.doc.rect(MARGIN, startY, 3, endY - startY, "F");
+    };
 
-    // Reset to draw content
-    this.y += 5;
+    // Leave space for severity bar
+    this.y += 6;
 
-    // Title and severity badge
+    // Title with severity badge inline
     this.doc.setFontSize(11);
     this.doc.setFont("helvetica", "bold");
     this.doc.setTextColor(...COLORS.black);
-    const titleText = this.truncateText(vuln.testName, CONTENT_WIDTH - 40);
-    this.doc.text(titleText, MARGIN + 4, this.y);
+    const titleText = vuln.testName;
 
-    // Severity badge
-    const badgeWidth = 20;
-    const badgeX = PAGE_WIDTH - MARGIN - badgeWidth - 4;
-    this.doc.setFillColor(...severityColor);
-    this.doc.roundedRect(badgeX, this.y - 4, badgeWidth, 6, 1, 1, "F");
-    this.doc.setFontSize(7);
-    this.doc.setTextColor(...COLORS.white);
-    this.doc.text(vuln.severity.toUpperCase(), badgeX + badgeWidth / 2, this.y, { align: "center" });
+    // Build severity badge text
+    const severityText = vuln.cvssScore > 0
+      ? `${vuln.severity.toUpperCase()} (CVSS: ${vuln.cvssScore.toFixed(1)})`
+      : vuln.severity.toUpperCase();
+
+    // Render title (allow wrapping for long titles)
+    const titleLines = this.doc.splitTextToSize(titleText, CONTENT_WIDTH - 70);
+    for (let i = 0; i < titleLines.length; i++) {
+      this.doc.text(titleLines[i], contentX, this.y);
+      if (i === 0) {
+        // Render severity badge on first line
+        const titleWidth = this.doc.getTextWidth(titleLines[i]);
+        const badgeX = contentX + titleWidth + 4;
+        const badgeWidth = this.doc.getTextWidth(severityText) + 6;
+
+        this.doc.setFillColor(...severityColor);
+        this.doc.roundedRect(badgeX, this.y - 4, badgeWidth, 6, 1, 1, "F");
+        this.doc.setFontSize(7);
+        this.doc.setFont("helvetica", "bold");
+        this.doc.setTextColor(...COLORS.white);
+        this.doc.text(severityText, badgeX + 3, this.y - 0.5);
+
+        // Reset font for next title line if any
+        this.doc.setFontSize(11);
+        this.doc.setFont("helvetica", "bold");
+        this.doc.setTextColor(...COLORS.black);
+      }
+      this.y += 5;
+    }
+
+    this.y += 3;
+
+    // Labeled fields - matching reference format
+    this.doc.setFontSize(FONT_SIZE_SMALL);
+
+    // Category
+    this.doc.setFont("helvetica", "bold");
+    this.doc.setTextColor(...COLORS.gray);
+    this.doc.text("Category:", contentX, this.y);
+    this.doc.setFont("helvetica", "normal");
+    this.doc.setTextColor(...COLORS.black);
+    this.doc.text(vuln.category, contentX + labelWidth, this.y);
+    this.y += 5;
+
+    // Method
+    this.doc.setFont("helvetica", "bold");
+    this.doc.setTextColor(...COLORS.gray);
+    this.doc.text("Method:", contentX, this.y);
+    this.doc.setFont("helvetica", "normal");
+    this.doc.setTextColor(...COLORS.black);
+    this.doc.text(`${vuln.method} ${vuln.endpoint}`, contentX + labelWidth, this.y);
+    this.y += 5;
+
+    // Detected date
+    this.doc.setFont("helvetica", "bold");
+    this.doc.setTextColor(...COLORS.gray);
+    this.doc.text("Detected:", contentX, this.y);
+    this.doc.setFont("helvetica", "normal");
+    this.doc.setTextColor(...COLORS.black);
+    this.doc.text(this.formatDate(vuln.detectionDate), contentX + labelWidth, this.y);
+    this.y += 5;
+
+    // OWASP Tags (if present)
+    if (vuln.owaspTags.length > 0) {
+      this.doc.setFont("helvetica", "bold");
+      this.doc.setTextColor(...COLORS.gray);
+      this.doc.text("OWASP:", contentX, this.y);
+      this.doc.setFont("helvetica", "normal");
+      this.doc.setTextColor(...COLORS.black);
+      this.doc.text(vuln.owaspTags.join(", "), contentX + labelWidth, this.y);
+      this.y += 5;
+    }
+
+    // Description - render all lines without truncation
+    if (vuln.description) {
+      this.y += 2;
+      this.doc.setFont("helvetica", "bold");
+      this.doc.setTextColor(...COLORS.gray);
+      this.doc.text("Description:", contentX, this.y);
+      this.y += 5;
+
+      this.doc.setFont("helvetica", "normal");
+      this.doc.setTextColor(...COLORS.black);
+      const descLines = this.doc.splitTextToSize(vuln.description, CONTENT_WIDTH - 15);
+      for (const line of descLines) {
+        // Check if we need a new page mid-description
+        if (this.y > PAGE_HEIGHT - MARGIN - 10) {
+          // Draw severity bar up to current position before page break
+          drawSeverityBar(this.y + 3);
+          this.doc.addPage();
+          this.y = MARGIN;
+          // No severity bar on continuation page
+        }
+        this.doc.text(line, contentX, this.y);
+        this.y += 4;
+      }
+    }
+
+    // Draw the severity bar for this finding
+    drawSeverityBar(this.y + 3);
 
     this.y += 6;
 
-    // Details
-    this.doc.setFontSize(FONT_SIZE_SMALL);
-    this.doc.setFont("helvetica", "normal");
-
-    const details = [
-      `Endpoint: ${vuln.method} ${vuln.endpoint}`,
-      `Category: ${vuln.category}`,
-    ];
-
-    if (vuln.cvssScore > 0) {
-      details.push(`CVSS Score: ${vuln.cvssScore.toFixed(1)}`);
-    }
-
-    for (const detail of details) {
-      this.doc.setTextColor(...COLORS.gray);
-      this.doc.text(this.truncateText(detail, CONTENT_WIDTH - 10), MARGIN + 4, this.y);
-      this.y += 4;
-    }
-
-    // OWASP Tags
-    if (vuln.owaspTags.length > 0) {
-      this.doc.setTextColor(...COLORS.gray);
-      this.doc.text(`OWASP: ${vuln.owaspTags.join(", ")}`, MARGIN + 4, this.y);
-      this.y += 4;
-    }
-
-    // Description
-    if (vuln.description) {
-      this.y += 2;
-      this.doc.setTextColor(...COLORS.black);
-      const descLines = this.doc.splitTextToSize(vuln.description, CONTENT_WIDTH - 10);
-      const maxLines = 4;
-      const linesToShow = descLines.slice(0, maxLines);
-      for (const line of linesToShow) {
-        this.doc.text(line, MARGIN + 4, this.y);
-        this.y += 4;
-      }
-      if (descLines.length > maxLines) {
-        this.doc.setTextColor(...COLORS.gray);
-        this.doc.text("... [see full report]", MARGIN + 4, this.y);
-        this.y += 4;
-      }
-    }
-
-    // Move y to end of card (without HTTP logs - those are rendered separately)
-    this.y = startY + cardHeight + 3;
-
     // HTTP Logs (rendered outside the card for better space management)
-    if (vuln.failingLogs.length > 0) {
+    // Only render for non-informational (vulnerabilities) that have logs
+    if (!isInformational && vuln.failingLogs.length > 0) {
       this.renderHttpLogs(vuln.failingLogs[0]);
     }
   }
@@ -417,7 +534,6 @@ export class PDFReportGenerator {
   private renderHttpLogs(log: FailingLog) {
     const codeBlockPadding = 3;
     const lineHeight = 3;
-    const maxLinesPerBlock = 15;
 
     // Check if we need a new page
     if (this.y > PAGE_HEIGHT - 80) {
@@ -425,87 +541,105 @@ export class PDFReportGenerator {
       this.y = MARGIN;
     }
 
-    // Request block
-    this.doc.setFontSize(8);
+    // "Failing Test Logs" header
+    this.doc.setFontSize(10);
     this.doc.setFont("helvetica", "bold");
     this.doc.setTextColor(...COLORS.black);
-    this.doc.text("HTTP Request:", MARGIN, this.y);
+    this.doc.text("Failing Test Logs", MARGIN, this.y);
+    this.y += 2;
+
+    // Underline
+    this.doc.setDrawColor(...COLORS.lightGray);
+    this.doc.setLineWidth(0.2);
+    this.doc.line(MARGIN, this.y, MARGIN + 35, this.y);
+    this.y += 6;
+
+    // Request block
+    this.doc.setFontSize(10);
+    this.doc.setFont("helvetica", "bold");
+    this.doc.setTextColor(...COLORS.gray);
+    this.doc.text("Request:", MARGIN, this.y);
     this.y += 5;
 
     const requestLines = this.doc.splitTextToSize(log.requestContent, CONTENT_WIDTH - 10);
-    const requestLinesToShow = requestLines.slice(0, maxLinesPerBlock);
-    const requestBlockHeight = requestLinesToShow.length * lineHeight + codeBlockPadding * 2;
+    this.renderCodeBlock(requestLines, lineHeight, codeBlockPadding);
 
-    // Request code block background
-    this.doc.setFillColor(...COLORS.codeBg);
-    this.doc.roundedRect(MARGIN, this.y, CONTENT_WIDTH, requestBlockHeight, 2, 2, "F");
-
-    // Request content
-    this.doc.setFontSize(6);
-    this.doc.setFont("courier", "normal");
-    this.doc.setTextColor(...COLORS.codeText);
-    let textY = this.y + codeBlockPadding + 2;
-    for (const line of requestLinesToShow) {
-      this.doc.text(line, MARGIN + codeBlockPadding, textY);
-      textY += lineHeight;
-    }
-    if (requestLines.length > maxLinesPerBlock) {
-      this.doc.text("... [truncated]", MARGIN + codeBlockPadding, textY);
-    }
-
-    this.y += requestBlockHeight + 5;
+    this.y += 5;
 
     // Check if we need a new page for response
-    if (this.y > PAGE_HEIGHT - 60) {
+    if (this.y > PAGE_HEIGHT - 40) {
       this.doc.addPage();
       this.y = MARGIN;
     }
 
     // Response block
-    this.doc.setFontSize(8);
+    this.doc.setFontSize(10);
     this.doc.setFont("helvetica", "bold");
-    this.doc.setTextColor(...COLORS.black);
-    this.doc.text(`HTTP Response (${log.statusCode}):`, MARGIN, this.y);
+    this.doc.setTextColor(...COLORS.gray);
+    this.doc.text(`Response (${log.statusCode}):`, MARGIN, this.y);
     this.y += 5;
 
     const responseLines = this.doc.splitTextToSize(log.responseContent, CONTENT_WIDTH - 10);
-    const responseLinesToShow = responseLines.slice(0, maxLinesPerBlock);
-    const responseBlockHeight = responseLinesToShow.length * lineHeight + codeBlockPadding * 2;
+    this.renderCodeBlock(responseLines, lineHeight, codeBlockPadding);
 
-    // Response code block background
-    this.doc.setFillColor(...COLORS.codeBg);
-    this.doc.roundedRect(MARGIN, this.y, CONTENT_WIDTH, responseBlockHeight, 2, 2, "F");
-
-    // Response content
-    this.doc.setFontSize(6);
-    this.doc.setFont("courier", "normal");
-    this.doc.setTextColor(...COLORS.codeText);
-    textY = this.y + codeBlockPadding + 2;
-    for (const line of responseLinesToShow) {
-      this.doc.text(line, MARGIN + codeBlockPadding, textY);
-      textY += lineHeight;
-    }
-    if (responseLines.length > maxLinesPerBlock) {
-      this.doc.text("... [truncated]", MARGIN + codeBlockPadding, textY);
-    }
-
-    this.y += responseBlockHeight + 8;
+    this.y += 10;
   }
 
-  private estimateCardHeight(vuln: VulnerabilityDetail): number {
-    let height = 25; // Base height for title, badge, and basic details
+  /**
+   * Render a code block that can span multiple pages if needed.
+   */
+  private renderCodeBlock(
+    lines: string[],
+    lineHeight: number,
+    padding: number
+  ) {
+    let remainingLines = [...lines];
 
-    height += 4 * 3; // 3 detail lines
+    while (remainingLines.length > 0) {
+      // Calculate how many lines fit on this page
+      const availableHeight = PAGE_HEIGHT - this.y - MARGIN - 5;
+      const maxLinesThisPage = Math.floor((availableHeight - padding * 2) / lineHeight);
 
-    if (vuln.owaspTags.length > 0) height += 4;
+      if (maxLinesThisPage <= 0) {
+        this.doc.addPage();
+        this.y = MARGIN;
+        continue;
+      }
 
-    if (vuln.description) {
-      const lines = Math.min(4, Math.ceil(vuln.description.length / 80));
-      height += lines * 4 + 4;
+      const linesToRender = remainingLines.slice(0, maxLinesThisPage);
+      remainingLines = remainingLines.slice(maxLinesThisPage);
+
+      const blockHeight = linesToRender.length * lineHeight + padding * 2;
+
+      // Code block background
+      this.doc.setFillColor(...COLORS.codeBg);
+      this.doc.roundedRect(MARGIN, this.y, CONTENT_WIDTH, blockHeight, 2, 2, "F");
+
+      // Code content
+      this.doc.setFontSize(8);
+      this.doc.setFont("courier", "normal");
+      this.doc.setTextColor(...COLORS.codeText);
+      let textY = this.y + padding + 2;
+      for (const line of linesToRender) {
+        this.doc.text(line, MARGIN + padding, textY);
+        textY += lineHeight;
+      }
+
+      this.y += blockHeight;
+
+      // If more lines remain, add a new page
+      if (remainingLines.length > 0) {
+        this.doc.addPage();
+        this.y = MARGIN;
+
+        // Add continuation indicator
+        this.doc.setFontSize(7);
+        this.doc.setFont("helvetica", "italic");
+        this.doc.setTextColor(...COLORS.gray);
+        this.doc.text("(continued)", MARGIN, this.y);
+        this.y += 5;
+      }
     }
-
-    // HTTP logs are rendered separately now, not in the card
-    return Math.max(height, 30);
   }
 
   private renderSectionTitle(title: string) {
@@ -612,7 +746,10 @@ export class PDFReportGenerator {
     detectionToFindingMap: Map<string, string>,
     includeInformational: boolean
   ): PDFReportData {
-    const endpointMap = new Map<string, VulnerabilityDetail[]>();
+    // Separate maps for vulnerabilities vs informational
+    const vulnEndpointMap = new Map<string, VulnerabilityDetail[]>();
+    const infoEndpointMap = new Map<string, VulnerabilityDetail[]>();
+
     const severityCounts: VulnerabilitySummary = {
       total: 0,
       critical: 0,
@@ -622,7 +759,7 @@ export class PDFReportGenerator {
       info: 0,
     };
 
-    // Process vulnerabilities (failed tests)
+    // Process vulnerabilities (failed tests with CVSS > 0)
     for (const endpoint of scanResults.vulnerabilities) {
       for (const finding of endpoint.scanFindings) {
         if (finding.testStatus.value !== "FAILED") continue;
@@ -644,7 +781,13 @@ export class PDFReportGenerator {
           logs
         );
 
-        this.addToEndpointMap(endpointMap, vuln);
+        // Vulnerabilities have CVSS > 0 and severity is not Info
+        if (vuln.severity !== "Info" && vuln.cvssScore > 0) {
+          this.addToEndpointMap(vulnEndpointMap, vuln);
+        } else {
+          // Info-level findings from vulnerabilities go to informational
+          this.addToEndpointMap(infoEndpointMap, vuln);
+        }
         this.incrementSeverityCount(severityCounts, vuln.severity);
       }
     }
@@ -660,13 +803,29 @@ export class PDFReportGenerator {
             undefined // Logs are ONLY available for vulnerabilities, not issues
           );
 
-          this.addToEndpointMap(endpointMap, vuln);
+          this.addToEndpointMap(infoEndpointMap, vuln);
           this.incrementSeverityCount(severityCounts, vuln.severity);
         }
       }
     }
 
-    const endpointGroups: EndpointGroup[] = Array.from(endpointMap.entries())
+    // Build vulnerability groups (sorted by severity, then count)
+    const vulnerabilityGroups: EndpointGroup[] = Array.from(vulnEndpointMap.entries())
+      .map(([endpoint, vulnerabilities]) => ({
+        endpoint,
+        vulnerabilityCount: vulnerabilities.length,
+        vulnerabilities: this.sortVulnerabilitiesBySeverity(vulnerabilities),
+      }))
+      .sort((a, b) => {
+        // Sort by highest severity first, then by count
+        const aMaxSeverity = this.getMaxSeverityOrder(a.vulnerabilities);
+        const bMaxSeverity = this.getMaxSeverityOrder(b.vulnerabilities);
+        if (aMaxSeverity !== bMaxSeverity) return aMaxSeverity - bMaxSeverity;
+        return b.vulnerabilityCount - a.vulnerabilityCount;
+      });
+
+    // Build informational groups
+    const informationalGroups: EndpointGroup[] = Array.from(infoEndpointMap.entries())
       .map(([endpoint, vulnerabilities]) => ({
         endpoint,
         vulnerabilityCount: vulnerabilities.length,
@@ -674,11 +833,16 @@ export class PDFReportGenerator {
       }))
       .sort((a, b) => b.vulnerabilityCount - a.vulnerabilityCount);
 
+    // Combined groups for backward compatibility
+    const endpointGroups = [...vulnerabilityGroups, ...informationalGroups];
+
     return {
       scanId: scanResults.scanId,
       status: scanResults.status,
       generatedAt: new Date(),
       summary: severityCounts,
+      vulnerabilityGroups,
+      informationalGroups,
       endpointGroups,
       metadata: {
         endpointsScanned: scanResults.metadata.endpointsScanned,
@@ -688,6 +852,12 @@ export class PDFReportGenerator {
         testsFailed: scanResults.metadata.testsFailed,
       },
     };
+  }
+
+  private getMaxSeverityOrder(vulns: VulnerabilityDetail[]): number {
+    const order = { Critical: 0, High: 1, Medium: 2, Low: 3, Info: 4 };
+    if (vulns.length === 0) return 5;
+    return Math.min(...vulns.map(v => order[v.severity]));
   }
 
   private transformFinding(
@@ -759,7 +929,7 @@ export class PDFReportGenerator {
       ...Object.entries(entry.response.headers || {}).map(([k, v]) => `${k}: ${v}`),
     ];
     if (entry.response.content) {
-      responseLines.push("", this.truncateContent(entry.response.content, 500));
+      responseLines.push("", entry.response.content);
     }
 
     return {
@@ -769,11 +939,6 @@ export class PDFReportGenerator {
       requestContent: requestLines.join("\n"),
       responseContent: responseLines.join("\n"),
     };
-  }
-
-  private truncateContent(content: string, maxLength: number): string {
-    if (content.length <= maxLength) return content;
-    return content.substring(0, maxLength) + "\n... [truncated]";
   }
 
   private addToEndpointMap(map: Map<string, VulnerabilityDetail[]>, vuln: VulnerabilityDetail) {

@@ -13,6 +13,7 @@ import {
   DetectionLogs,
   ScanListItem,
   DetectionsResponse,
+  EndpointFindings,
 } from "./types";
 
 const API_BASE = "/api/apisec";
@@ -160,36 +161,130 @@ function createFindingKey(
 }
 
 /**
+ * Build ScanResults from detections data when scanId is not available.
+ * This allows generating vulnerability-only reports without a scan ID.
+ */
+function buildScanResultsFromDetections(
+  detectionsResponse: DetectionsResponse,
+  instanceId: string
+): ScanResults {
+  // Group vulnerabilities by endpoint
+  const endpointMap = new Map<string, EndpointFindings>();
+
+  for (const detection of detectionsResponse.detections) {
+    for (const vuln of detection.data.vulnerabilities) {
+      const endpointKey = `${vuln.method}:${vuln.resource}`;
+
+      if (!endpointMap.has(endpointKey)) {
+        endpointMap.set(endpointKey, {
+          endpointId: vuln.endpointId,
+          method: vuln.method,
+          resource: vuln.resource,
+          scanFindings: [],
+        });
+      }
+
+      const endpoint = endpointMap.get(endpointKey)!;
+      endpoint.scanFindings.push({
+        executionId: vuln.detectionId, // Use detectionId as executionId
+        detectionDate: vuln.detectionDate,
+        testDetails: {
+          categoryId: detection.category.id,
+          categoryName: detection.category.name,
+          categoryTestId: detection.test.id,
+          categoryTestName: detection.test.name,
+          owaspTags: detection.test.owaspTag || [],
+        },
+        testStatus: {
+          value: "FAILED",
+          description: vuln.testResult.detectionDescription,
+        },
+        testResult: {
+          cvssScore: vuln.testResult.cvssScore,
+          cvssQualifier: vuln.testResult.cvssQualifier as "Critical" | "High" | "Medium" | "Low" | "Info",
+          detectionDescription: vuln.testResult.detectionDescription,
+        },
+      });
+    }
+  }
+
+  const vulnerabilities = Array.from(endpointMap.values());
+  const totalVulns = vulnerabilities.reduce((sum, e) => sum + e.scanFindings.length, 0);
+
+  // Handle case where metadata might be null
+  const totalTests = detectionsResponse.metadata?.totalTests ?? totalVulns;
+
+  return {
+    scanId: `detections-${instanceId}`, // Synthetic scan ID
+    status: "COMPLETED",
+    startTime: new Date().toISOString(),
+    lastUpdateTime: new Date().toISOString(),
+    scanAuth: "",
+    vulnerabilities,
+    issues: [], // No issues available without scan results
+    metadata: {
+      endpointsUnderTest: vulnerabilities.length,
+      endpointsScanned: vulnerabilities.length,
+      totalTests,
+      testsPassed: totalTests - totalVulns,
+      testsFailed: totalVulns,
+      testsSkipped: 0,
+      numVulnerabilities: totalVulns,
+      numIssues: 0,
+    },
+  };
+}
+
+/**
  * Fetch all data needed for report generation.
  *
  * Why: Separates data fetching from PDF generation, allowing the
  * PDFReportGenerator to focus solely on data transformation and rendering.
  *
- * Flow:
+ * Flow (with scanId):
  * 1. Get scan results (vulnerabilities + issues)
  * 2. Get detections list to obtain detectionIds
  * 3. Fetch logs for each detectionId
  * 4. Build a map to match logs to scan findings
+ *
+ * Flow (without scanId - vulnerabilities only):
+ * 1. Get detections list (contains vulnerability data)
+ * 2. Build synthetic scan results from detections
+ * 3. Optionally fetch logs for each detection
  */
 export async function fetchReportData(
   token: string,
   _tenant: string, // Kept for API compatibility but not used (tenant is in token)
   appId: string,
   instanceId: string,
-  scanId: string,
+  scanId: string, // Can be empty - only needed for informational findings
   includeHttpLogs: boolean,
   onProgress?: (message: string, percent: number) => void
 ): Promise<FetchReportDataResult> {
-  onProgress?.("Fetching scan results...", 10);
-
-  // Step 1: Get scan results
-  const scanResults = await getScanResults(token, appId, instanceId, scanId);
   const detectionLogsMap = new Map<string, DetectionLogs>();
   const detectionToFindingMap = new Map<string, string>();
+  let scanResults: ScanResults;
 
-  console.log(`[DEBUG] Scan has ${scanResults.vulnerabilities.length} endpoint groups with vulnerabilities`);
+  // Check if we have a scan ID
+  const hasScanId = scanId && scanId.trim() !== "";
 
-  // Step 2: If we want logs and have vulnerabilities, get detections
+  if (hasScanId) {
+    // Original flow: Get scan results (includes issues/informational)
+    onProgress?.("Fetching scan results...", 10);
+    scanResults = await getScanResults(token, appId, instanceId, scanId);
+    console.log(`[DEBUG] Scan has ${scanResults.vulnerabilities.length} endpoint groups with vulnerabilities`);
+    console.log(`[DEBUG] Scan has ${scanResults.issues.length} endpoint groups with issues`);
+  } else {
+    // No scan ID: Build from detections only (vulnerabilities only, no issues)
+    onProgress?.("Fetching detections...", 10);
+    const detectionsResponse = await getDetections(token, appId, instanceId);
+    console.log(`[DEBUG] Got ${detectionsResponse.detections.length} detection categories`);
+
+    scanResults = buildScanResultsFromDetections(detectionsResponse, instanceId);
+    console.log(`[DEBUG] Built scan results with ${scanResults.vulnerabilities.length} endpoint groups`);
+  }
+
+  // Fetch HTTP logs if requested
   if (includeHttpLogs && scanResults.vulnerabilities.length > 0) {
     onProgress?.("Fetching detections list...", 30);
 
@@ -197,7 +292,7 @@ export async function fetchReportData(
       const detectionsResponse = await getDetections(token, appId, instanceId);
       console.log(`[DEBUG] Got ${detectionsResponse.detections.length} detection categories`);
 
-      // Step 3: Extract all detectionIds and build mapping
+      // Extract all detectionIds and build mapping
       const detectionIds: Array<{ detectionId: string; findingKey: string }> = [];
 
       for (const detection of detectionsResponse.detections) {
@@ -217,7 +312,7 @@ export async function fetchReportData(
 
       console.log(`[DEBUG] Found ${detectionIds.length} total detectionIds`);
 
-      // Step 4: Fetch logs for each detection
+      // Fetch logs for each detection
       onProgress?.("Fetching HTTP logs...", 40);
 
       const total = detectionIds.length;

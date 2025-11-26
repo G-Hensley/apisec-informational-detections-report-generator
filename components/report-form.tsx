@@ -116,11 +116,12 @@ export function ReportForm() {
     }
   };
 
+  // Scan ID is only required when including informational findings
   const isValid =
     config.token.trim() !== "" &&
     config.appId.trim() !== "" &&
     config.instanceId.trim() !== "" &&
-    config.scanId.trim() !== "";
+    (!config.includeInformational || config.scanId.trim() !== "");
 
   return (
     <Card className="w-full max-w-2xl mx-auto">
@@ -132,6 +133,41 @@ export function ReportForm() {
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Report Options - at the top */}
+          <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
+            <Label className="text-sm font-medium">Report Options</Label>
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="includeInformational"
+                checked={config.includeInformational}
+                onCheckedChange={(checked) => {
+                  const isChecked = checked === true;
+                  updateConfig("includeInformational", isChecked);
+                  // Clear scan ID when unchecking to ensure we use detections-only flow
+                  if (!isChecked) {
+                    updateConfig("scanId", "");
+                  }
+                }}
+              />
+              <Label htmlFor="includeInformational" className="text-sm font-normal">
+                Include Informational Findings (requires Scan ID)
+              </Label>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="includeHttpLogs"
+                checked={config.includeHttpLogs}
+                onCheckedChange={(checked) =>
+                  updateConfig("includeHttpLogs", checked === true)
+                }
+              />
+              <Label htmlFor="includeHttpLogs" className="text-sm font-normal">
+                Include HTTP Logs (slower, vulnerabilities only)
+              </Label>
+            </div>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="token">Auth Token</Label>
             <Textarea
@@ -139,7 +175,7 @@ export function ReportForm() {
               placeholder="Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6Ikp..."
               value={config.token}
               onChange={(e) => updateConfig("token", e.target.value)}
-              className="font-mono text-sm min-h-[80px]"
+              className="font-mono text-sm min-h-20"
             />
             <p className="text-xs text-muted-foreground">
               Paste your Bearer token from the APIsec Network tab
@@ -181,44 +217,21 @@ export function ReportForm() {
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="scanId">Scan ID</Label>
-            <Input
-              id="scanId"
-              placeholder="019a507a-1234-5678-90ab-cdef12345678"
-              value={config.scanId}
-              onChange={(e) => updateConfig("scanId", e.target.value)}
-              className="font-mono"
-            />
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="includeHttpLogs"
-                checked={config.includeHttpLogs}
-                onCheckedChange={(checked) =>
-                  updateConfig("includeHttpLogs", checked === true)
-                }
+          {config.includeInformational && (
+            <div className="space-y-2">
+              <Label htmlFor="scanId">Scan ID</Label>
+              <Input
+                id="scanId"
+                placeholder="019a507a-1234-5678-90ab-cdef12345678"
+                value={config.scanId}
+                onChange={(e) => updateConfig("scanId", e.target.value)}
+                className="font-mono"
               />
-              <Label htmlFor="includeHttpLogs" className="text-sm font-normal">
-                Include HTTP Logs (slower, vulnerabilities only)
-              </Label>
+              <p className="text-xs text-muted-foreground">
+                Required for informational findings
+              </p>
             </div>
-
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="includeInformational"
-                checked={config.includeInformational}
-                onCheckedChange={(checked) =>
-                  updateConfig("includeInformational", checked === true)
-                }
-              />
-              <Label htmlFor="includeInformational" className="text-sm font-normal">
-                Include Informational Findings
-              </Label>
-            </div>
-          </div>
+          )}
 
           {state.error && (
             <div className="p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md">

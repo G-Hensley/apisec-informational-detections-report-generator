@@ -76,6 +76,11 @@ export interface PDFReportData {
   hostUrl?: string;
   generatedAt: Date;
   summary: VulnerabilitySummary;
+  /** Vulnerability findings (FAILED tests with CVSS > 0) - rendered first */
+  vulnerabilityGroups: EndpointGroup[];
+  /** Informational findings (issues/info detections) - rendered after vulnerabilities */
+  informationalGroups: EndpointGroup[];
+  /** @deprecated Use vulnerabilityGroups + informationalGroups instead */
   endpointGroups: EndpointGroup[];
   metadata: {
     endpointsScanned: number;
