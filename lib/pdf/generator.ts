@@ -225,18 +225,19 @@ export class PDFReportGenerator {
     );
     this.y += 10;
 
-    // Severity boxes - only show vulnerability severities (not info) in the main summary
-    const boxWidth = (CONTENT_WIDTH - 3 * 5) / 4; // 4 boxes with 5mm gaps
+    // Severity boxes - all 5 levels in one row
+    const boxWidth = (CONTENT_WIDTH - 4 * 5) / 5; // 5 boxes with 5mm gaps
     const boxHeight = 22;
-    const vulnBoxes = [
+    const boxes = [
       { label: "CRITICAL", value: summary.critical, color: COLORS.critical },
       { label: "HIGH", value: summary.high, color: COLORS.high },
       { label: "MEDIUM", value: summary.medium, color: COLORS.medium },
       { label: "LOW", value: summary.low, color: COLORS.low },
+      { label: "INFO", value: summary.info, color: COLORS.info },
     ];
 
     let x = MARGIN;
-    for (const box of vulnBoxes) {
+    for (const box of boxes) {
       // Box background
       this.doc.setFillColor(...box.color);
       this.doc.roundedRect(x, this.y, boxWidth, boxHeight, 2, 2, "F");
@@ -254,23 +255,7 @@ export class PDFReportGenerator {
       x += boxWidth + 5;
     }
 
-    this.y += boxHeight + 5;
-
-    // Info box (separate, smaller)
-    if (infoCount > 0) {
-      const infoBoxWidth = 45;
-      this.doc.setFillColor(...COLORS.info);
-      this.doc.roundedRect(MARGIN, this.y, infoBoxWidth, 14, 2, 2, "F");
-
-      this.doc.setFontSize(8);
-      this.doc.setFont("helvetica", "bold");
-      this.doc.setTextColor(...COLORS.white);
-      this.doc.text(`INFORMATIONAL: ${infoCount}`, MARGIN + infoBoxWidth / 2, this.y + 9, { align: "center" });
-
-      this.y += 18;
-    } else {
-      this.y += 5;
-    }
+    this.y += boxHeight + 10;
   }
 
   private renderStatistics(data: PDFReportData) {
@@ -793,6 +778,7 @@ export class PDFReportGenerator {
     }
 
     // Process issues (informational) if requested - no logs available for these
+    // Force all issues to "Info" severity since they are informational by definition
     if (includeInformational) {
       for (const endpoint of scanResults.issues) {
         for (const finding of endpoint.scanFindings) {
@@ -800,7 +786,8 @@ export class PDFReportGenerator {
             endpoint.resource,
             endpoint.method,
             finding,
-            undefined // Logs are ONLY available for vulnerabilities, not issues
+            undefined, // Logs are ONLY available for vulnerabilities, not issues
+            true // Force Info severity for all informational findings
           );
 
           this.addToEndpointMap(infoEndpointMap, vuln);
@@ -864,10 +851,13 @@ export class PDFReportGenerator {
     resource: string,
     method: string,
     finding: ScanResults["vulnerabilities"][0]["scanFindings"][0],
-    logs?: DetectionLogs
+    logs?: DetectionLogs,
+    forceInfoSeverity: boolean = false
   ): VulnerabilityDetail {
-    const cvssScore = finding.testResult?.cvssScore ?? 0;
-    const severity = finding.testResult?.cvssQualifier ?? getSeverityFromCvss(cvssScore);
+    const cvssScore = forceInfoSeverity ? 0 : (finding.testResult?.cvssScore ?? 0);
+    const severity = forceInfoSeverity
+      ? "Info"
+      : (finding.testResult?.cvssQualifier ?? getSeverityFromCvss(cvssScore));
 
     const failingLogs: FailingLog[] = [];
 

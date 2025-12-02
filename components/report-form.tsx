@@ -18,6 +18,43 @@ import { ReportConfig } from "@/lib/types";
 import { fetchReportData, ApiSecError } from "@/lib/apisec-client";
 import { FileDown, Loader2 } from "lucide-react";
 
+/**
+ * Parse an APIsec URL to extract tenant, appId, instanceId, and scanId.
+ * Example URL: https://ceteam.apisecapps.com/application/01961219-a5c0-7f5f-ad02-9b1ed794d003/instance/01961219-abee-7458-824c-3f01710bd970/scans/019a79a9-3c46-782a-b0d6-4dd00fdbd3a3
+ */
+function parseApisecUrl(url: string): {
+  tenant?: string;
+  appId?: string;
+  instanceId?: string;
+  scanId?: string;
+} | null {
+  try {
+    const parsed = new URL(url.trim());
+
+    // Extract tenant from hostname (e.g., "ceteam" from "ceteam.apisecapps.com")
+    const hostMatch = parsed.hostname.match(/^([^.]+)\.apisecapps\.com$/);
+    const tenant = hostMatch?.[1];
+
+    // Extract IDs from pathname
+    const pathMatch = parsed.pathname.match(
+      /\/application\/([^/]+)\/instance\/([^/]+)(?:\/scans\/([^/]+))?/
+    );
+
+    if (!tenant || !pathMatch) {
+      return null;
+    }
+
+    return {
+      tenant,
+      appId: pathMatch[1],
+      instanceId: pathMatch[2],
+      scanId: pathMatch[3], // May be undefined if URL doesn't include scan
+    };
+  } catch {
+    return null;
+  }
+}
+
 interface GenerationState {
   isGenerating: boolean;
   progress: number;
@@ -43,6 +80,26 @@ export function ReportForm() {
     error: null,
   });
 
+  const [urlInput, setUrlInput] = useState("");
+  const [urlParsed, setUrlParsed] = useState(false);
+
+  const handleUrlChange = (url: string) => {
+    setUrlInput(url);
+    setUrlParsed(false);
+
+    const parsed = parseApisecUrl(url);
+    if (parsed) {
+      setConfig((prev) => ({
+        ...prev,
+        tenant: parsed.tenant || prev.tenant,
+        appId: parsed.appId || prev.appId,
+        instanceId: parsed.instanceId || prev.instanceId,
+        scanId: parsed.scanId || prev.scanId,
+      }));
+      setUrlParsed(true);
+    }
+  };
+
   const updateConfig = <K extends keyof ReportConfig>(
     key: K,
     value: ReportConfig[K]
@@ -60,6 +117,8 @@ export function ReportForm() {
       includeHttpLogs: false,
       includeInformational: true,
     });
+    setUrlInput("");
+    setUrlParsed(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -180,6 +239,25 @@ export function ReportForm() {
                 Include HTTP Logs (slower, vulnerabilities only)
               </Label>
             </div>
+          </div>
+
+          {/* URL Auto-fill */}
+          <div className="space-y-2">
+            <Label htmlFor="apisecUrl">APIsec URL (optional)</Label>
+            <Input
+              id="apisecUrl"
+              placeholder="https://tenant.apisecapps.com/application/.../instance/.../scans/..."
+              value={urlInput}
+              onChange={(e) => handleUrlChange(e.target.value)}
+              className="font-mono text-sm"
+            />
+            <p className="text-xs text-zinc-400">
+              {urlParsed ? (
+                <span className="text-green-400">Extracted tenant, app ID, instance ID{config.scanId ? ", and scan ID" : ""} from URL</span>
+              ) : (
+                "Paste a scan URL to auto-fill tenant and IDs"
+              )}
+            </p>
           </div>
 
           <div className="space-y-2">
