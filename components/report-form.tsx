@@ -127,7 +127,7 @@ export function ReportForm() {
 
     try {
       // Step 1: Fetch scan data and logs from API
-      const { scanResults, detectionLogsMap, detectionToFindingMap } = await fetchReportData(
+      const { scanResults, detectionLogsMap, detectionToFindingMap, detectionStatusByKey, excludedFindingKeys, appName, hostUrl, endpointAuthMap } = await fetchReportData(
         config.token,
         config.tenant,
         config.appId,
@@ -148,7 +148,12 @@ export function ReportForm() {
         scanResults,
         detectionLogsMap,
         detectionToFindingMap,
+        detectionStatusByKey,
+        excludedFindingKeys,
         includeInformational: config.includeInformational,
+        appName,
+        hostUrl,
+        endpointAuthMap,
         onProgress: (message, percent) => {
           // Scale PDF progress to 65-100%
           const scaledPercent = 65 + Math.round(percent * 0.35);

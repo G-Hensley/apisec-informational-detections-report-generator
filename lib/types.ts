@@ -90,6 +90,21 @@ export interface ScanListItem {
 }
 
 /**
+ * Application details from the /v1/applications/{appId} endpoint.
+ */
+export interface ApplicationDetails {
+  applicationId: string;
+  applicationName: string;
+  applicationType: string;
+  origin: string;
+  instances: Array<{
+    instanceId: string;
+    hostUrl: string;
+    instanceName: string | null;
+  }>;
+}
+
+/**
  * Detections API Response Types
  *
  * Why: The detections endpoint provides detectionIds needed to fetch HTTP logs.
@@ -133,6 +148,50 @@ export interface DetectionMetadata {
   totalVulnerabilitiesResolved: number;
   totalTests: number;
   totalHoursSaved: number;
+}
+
+/**
+ * Endpoint Configuration Response Types
+ *
+ * Why: The /endpoints API provides auth requirements per endpoint,
+ * allowing us to show whether endpoints require authentication.
+ */
+export interface EndpointConfigResponse {
+  metadata: {
+    numEndpoints: number;
+    numEndpointsRequireAuth: number;
+    numSensitiveEndpoints: number;
+  };
+  endpointGroups: EndpointConfigGroup[];
+}
+
+export interface EndpointConfigGroup {
+  groupId: string;
+  name: string;
+  sensitivityQualifier: string;
+  endpoints: EndpointConfig[];
+}
+
+export interface EndpointConfig {
+  id: string;
+  path: string;
+  method: string;
+  sensitivityQualifier: string;
+  requiresAuthorization: boolean;
+  metadata: {
+    numParams: number;
+    numSensitive: number;
+    sensitiveParams: string[];
+    nonSensitiveParams: string[];
+  };
+  testabilityStatus: {
+    testability: string;
+    authUsed: string[];
+    reasonIfNot: string | null;
+    dateTime: string | null;
+    request: unknown | null;
+    response: unknown | null;
+  };
 }
 
 /**

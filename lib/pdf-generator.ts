@@ -13,7 +13,13 @@ export interface GeneratePDFOptions {
   scanResults: ScanResults;
   detectionLogsMap: Map<string, DetectionLogs>;
   detectionToFindingMap: Map<string, string>;
+  detectionStatusByKey: Map<string, string>;
+  excludedFindingKeys: Set<string>;
   includeInformational: boolean;
+  appName?: string;
+  hostUrl?: string;
+  /** Maps endpoint key (METHOD:path) to whether it requires authentication */
+  endpointAuthMap: Map<string, boolean>;
   onProgress?: (message: string, percent: number) => void;
 }
 
@@ -21,10 +27,6 @@ export interface GeneratePDFOptions {
  * Generate and download a PDF vulnerability report.
  */
 export async function generatePDF(options: GeneratePDFOptions): Promise<void> {
-  console.log(`[DEBUG] generatePDF called with detectionLogsMap size: ${options.detectionLogsMap.size}`);
-  console.log(`[DEBUG] detectionLogsMap keys:`, Array.from(options.detectionLogsMap.keys()));
-  console.log(`[DEBUG] detectionToFindingMap size: ${options.detectionToFindingMap.size}`);
-
   const generator = new PDFReportGenerator({
     onProgress: options.onProgress,
   });
@@ -33,7 +35,12 @@ export async function generatePDF(options: GeneratePDFOptions): Promise<void> {
     options.scanResults,
     options.detectionLogsMap,
     options.detectionToFindingMap,
-    options.includeInformational
+    options.detectionStatusByKey,
+    options.excludedFindingKeys,
+    options.includeInformational,
+    options.appName,
+    options.hostUrl,
+    options.endpointAuthMap
   );
 
   const timestamp = new Date().toISOString().slice(0, 10);

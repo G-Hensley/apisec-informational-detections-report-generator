@@ -14,6 +14,8 @@ import {
   ScanListItem,
   DetectionsResponse,
   EndpointFindings,
+  ApplicationDetails,
+  EndpointConfigResponse,
 } from "./types";
 
 const API_BASE = "/api/apisec";
@@ -57,6 +59,19 @@ async function fetchApi<T>(
   }
 
   return res.json();
+}
+
+/**
+ * Get application details including name.
+ */
+export async function getApplicationDetails(
+  token: string,
+  appId: string
+): Promise<ApplicationDetails> {
+  return fetchApi<ApplicationDetails>(
+    `/v1/applications/${appId}`,
+    token
+  );
 }
 
 /**
@@ -106,6 +121,23 @@ export async function getDetections(
 }
 
 /**
+ * Get endpoint configuration for an instance.
+ *
+ * Why: Provides authentication requirements per endpoint,
+ * allowing reports to show whether endpoints require auth.
+ */
+export async function getEndpointConfig(
+  token: string,
+  appId: string,
+  instanceId: string
+): Promise<EndpointConfigResponse> {
+  return fetchApi<EndpointConfigResponse>(
+    `/v1/applications/${appId}/instances/${instanceId}/endpoints?include=metadata&slim=true`,
+    token
+  );
+}
+
+/**
  * Get detection logs for a specific vulnerability using detectionId.
  *
  * IMPORTANT: This requires a detectionId from getDetections(),
@@ -118,12 +150,9 @@ export async function getDetectionLogs(
   detectionId: string
 ): Promise<DetectionLogs> {
   const endpoint = `/v1/applications/${appId}/instances/${instanceId}/detections/${detectionId}`;
-  console.log(`[DEBUG] Fetching detection logs from: ${endpoint}`);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rawResponse = await fetchApi<any>(endpoint, token);
-
-  console.log(`[DEBUG] Raw API response for ${detectionId}:`, JSON.stringify(rawResponse).substring(0, 500));
 
   // The response should have logs.testChain
   if (rawResponse.logs?.testChain) {
@@ -146,18 +175,64 @@ export interface FetchReportDataResult {
   detectionLogsMap: Map<string, DetectionLogs>;
   /** Maps detectionId to matching scan finding key (endpoint:method:category:test) */
   detectionToFindingMap: Map<string, string>;
+  /** Maps finding key (resource:method:categoryId:testId) to detection status */
+  detectionStatusByKey: Map<string, string>;
+  /** Finding keys that should be excluded (resolved/false positive status) */
+  excludedFindingKeys: Set<string>;
+  /** Application name fetched from the API */
+  appName?: string;
+  /** Host URL for the scanned instance */
+  hostUrl?: string;
+  /** Maps endpoint path to whether it requires authentication (from instance config) */
+  endpointAuthMap: Map<string, boolean>;
 }
 
 /**
- * Create a key for matching scan findings to detections.
+ * Create a key for matching scan findings to detections for exclusion filtering.
+ * Uses method:resource:categoryId:testId for reliable matching between APIs.
  */
-function createFindingKey(
+function createExclusionKey(
+  method: string,
+  resource: string,
+  categoryId: string,
+  testId: string
+): string {
+  // Normalize: lowercase method, trim resource, normalize path separators
+  return `${method.toUpperCase()}:${resource.trim()}:${categoryId}:${testId}`;
+}
+
+/**
+ * Create a key for matching logs (uses resource path for log lookup).
+ */
+function createLogKey(
   resource: string,
   method: string,
   categoryId: string,
   testId: string
 ): string {
   return `${resource}:${method.toLowerCase()}:${categoryId}:${testId}`;
+}
+
+/**
+ * Resolution statuses that should be excluded from reports.
+ * These represent findings that have been addressed or determined to not be real issues.
+ * All statuses are stored normalized (lowercase, spaces instead of underscores).
+ */
+const EXCLUDED_STATUSES = ["false positive", "resolved"];
+
+/**
+ * Normalize a status string for comparison.
+ * Converts to lowercase and replaces underscores with spaces.
+ */
+function normalizeStatus(status: string): string {
+  return status.toLowerCase().replace(/_/g, " ");
+}
+
+/**
+ * Check if a detection should be included in the report based on its resolution status.
+ */
+function isActiveDetection(status: string): boolean {
+  return !EXCLUDED_STATUSES.includes(normalizeStatus(status));
 }
 
 /**
@@ -173,6 +248,11 @@ function buildScanResultsFromDetections(
 
   for (const detection of detectionsResponse.detections) {
     for (const vuln of detection.data.vulnerabilities) {
+      // Skip resolved or false positive detections
+      if (!isActiveDetection(vuln.status)) {
+        continue;
+      }
+
       const endpointKey = `${vuln.method}:${vuln.resource}`;
 
       if (!endpointMap.has(endpointKey)) {
@@ -263,7 +343,40 @@ export async function fetchReportData(
 ): Promise<FetchReportDataResult> {
   const detectionLogsMap = new Map<string, DetectionLogs>();
   const detectionToFindingMap = new Map<string, string>();
+  const detectionStatusByKey = new Map<string, string>();
+  const excludedFindingKeys = new Set<string>();
+  const endpointAuthMap = new Map<string, boolean>();
   let scanResults: ScanResults;
+  let appName: string | undefined;
+  let hostUrl: string | undefined;
+
+  // Fetch application details to get the app name and host URL
+  onProgress?.("Fetching application details...", 3);
+  try {
+    const appDetails = await getApplicationDetails(token, appId);
+    appName = appDetails.applicationName;
+    // Find the matching instance to get the host URL
+    const matchingInstance = appDetails.instances.find(i => i.instanceId === instanceId);
+    hostUrl = matchingInstance?.hostUrl;
+  } catch (error) {
+    console.warn("Failed to fetch application details:", error);
+  }
+
+  // Fetch endpoint configuration to get auth requirements per endpoint
+  onProgress?.("Fetching endpoint configuration...", 6);
+  try {
+    const endpointConfig = await getEndpointConfig(token, appId, instanceId);
+    // Build map of endpoint path -> requires auth
+    for (const group of endpointConfig.endpointGroups) {
+      for (const endpoint of group.endpoints) {
+        // Key: METHOD:path (normalized to uppercase method)
+        const key = `${endpoint.method.toUpperCase()}:${endpoint.path}`;
+        endpointAuthMap.set(key, endpoint.requiresAuthorization);
+      }
+    }
+  } catch (error) {
+    console.warn("Failed to fetch endpoint configuration:", error);
+  }
 
   // Check if we have a scan ID
   const hasScanId = scanId && scanId.trim() !== "";
@@ -272,16 +385,57 @@ export async function fetchReportData(
     // Original flow: Get scan results (includes issues/informational)
     onProgress?.("Fetching scan results...", 10);
     scanResults = await getScanResults(token, appId, instanceId, scanId);
-    console.log(`[DEBUG] Scan has ${scanResults.vulnerabilities.length} endpoint groups with vulnerabilities`);
-    console.log(`[DEBUG] Scan has ${scanResults.issues.length} endpoint groups with issues`);
+
+    // Also fetch detections to determine which findings are resolved/false positive
+    onProgress?.("Fetching detection status...", 20);
+    try {
+      const detectionsResponse = await getDetections(token, appId, instanceId);
+
+      for (const detection of detectionsResponse.detections) {
+        for (const vuln of detection.data.vulnerabilities) {
+          const exclusionKey = createExclusionKey(
+            vuln.method,
+            vuln.resource,
+            detection.category.id,
+            detection.test.id
+          );
+
+          // Track status for display
+          const logKey = createLogKey(
+            vuln.resource,
+            vuln.method,
+            detection.category.id,
+            detection.test.id
+          );
+          detectionStatusByKey.set(logKey, vuln.status);
+
+          if (!isActiveDetection(vuln.status)) {
+            excludedFindingKeys.add(exclusionKey);
+          }
+        }
+      }
+    } catch (error) {
+      console.warn("Failed to fetch detection status for filtering:", error);
+    }
   } else {
     // No scan ID: Build from detections only (vulnerabilities only, no issues)
+    // Filtering is already done in buildScanResultsFromDetections
     onProgress?.("Fetching detections...", 10);
     const detectionsResponse = await getDetections(token, appId, instanceId);
-    console.log(`[DEBUG] Got ${detectionsResponse.detections.length} detection categories`);
-
     scanResults = buildScanResultsFromDetections(detectionsResponse, instanceId);
-    console.log(`[DEBUG] Built scan results with ${scanResults.vulnerabilities.length} endpoint groups`);
+
+    // Track status for display
+    for (const detection of detectionsResponse.detections) {
+      for (const vuln of detection.data.vulnerabilities) {
+        const logKey = createLogKey(
+          vuln.resource,
+          vuln.method,
+          detection.category.id,
+          detection.test.id
+        );
+        detectionStatusByKey.set(logKey, vuln.status);
+      }
+    }
   }
 
   // Fetch HTTP logs if requested
@@ -290,47 +444,46 @@ export async function fetchReportData(
 
     try {
       const detectionsResponse = await getDetections(token, appId, instanceId);
-      console.log(`[DEBUG] Got ${detectionsResponse.detections.length} detection categories`);
 
-      // Extract all detectionIds and build mapping
+      // Extract all detectionIds and build mapping (excluding resolved/false positive)
       const detectionIds: Array<{ detectionId: string; findingKey: string }> = [];
 
       for (const detection of detectionsResponse.detections) {
         for (const vuln of detection.data.vulnerabilities) {
-          const findingKey = createFindingKey(
+          // Skip resolved or false positive detections
+          if (!isActiveDetection(vuln.status)) {
+            continue;
+          }
+
+          // Use createLogKey for log matching (uses resource path)
+          const logKey = createLogKey(
             vuln.resource,
             vuln.method,
             detection.category.id,
             detection.test.id
           );
-          detectionIds.push({ detectionId: vuln.detectionId, findingKey });
-          detectionToFindingMap.set(vuln.detectionId, findingKey);
-
-          console.log(`[DEBUG] Found detectionId ${vuln.detectionId} for ${findingKey}`);
+          detectionIds.push({ detectionId: vuln.detectionId, findingKey: logKey });
+          detectionToFindingMap.set(vuln.detectionId, logKey);
+          detectionStatusByKey.set(logKey, vuln.status);
         }
       }
-
-      console.log(`[DEBUG] Found ${detectionIds.length} total detectionIds`);
 
       // Fetch logs for each detection
       onProgress?.("Fetching HTTP logs...", 40);
 
       const total = detectionIds.length;
       for (let i = 0; i < total; i++) {
-        const { detectionId, findingKey } = detectionIds[i];
+        const { detectionId } = detectionIds[i];
         try {
           const logs = await getDetectionLogs(token, appId, instanceId, detectionId);
           detectionLogsMap.set(detectionId, logs);
-          console.log(`[DEBUG] Got logs for ${detectionId} (${findingKey})`);
-        } catch (error) {
-          console.warn(`Failed to fetch logs for ${detectionId}:`, error);
+        } catch {
+          // Silently skip failed log fetches
         }
 
         const progress = 40 + Math.round((i / total) * 50);
         onProgress?.(`Fetching HTTP logs (${i + 1}/${total})...`, progress);
       }
-
-      console.log(`[DEBUG] Total logs fetched: ${detectionLogsMap.size}`);
     } catch (error) {
       console.error("Failed to fetch detections:", error);
     }
@@ -342,6 +495,11 @@ export async function fetchReportData(
     scanResults,
     detectionLogsMap,
     detectionToFindingMap,
+    detectionStatusByKey,
+    excludedFindingKeys,
+    appName,
+    hostUrl,
+    endpointAuthMap,
   };
 }
 
@@ -356,11 +514,11 @@ export function findLogsForFinding(
   detectionToFindingMap: Map<string, string>,
   detectionLogsMap: Map<string, DetectionLogs>
 ): DetectionLogs | undefined {
-  const findingKey = createFindingKey(resource, method, categoryId, testId);
+  const logKey = createLogKey(resource, method, categoryId, testId);
 
   // Find the detectionId that matches this finding
   for (const [detectionId, key] of detectionToFindingMap.entries()) {
-    if (key === findingKey) {
+    if (key === logKey) {
       return detectionLogsMap.get(detectionId);
     }
   }

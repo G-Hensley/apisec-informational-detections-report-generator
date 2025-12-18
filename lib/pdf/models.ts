@@ -21,6 +21,21 @@ export interface VulnerabilitySummary {
 }
 
 /**
+ * Information about an injected payload that triggered a vulnerability.
+ *
+ * Why: Provides specific call-out for which parameter was exploited and with what payload,
+ * making it easier to understand and remediate the vulnerability.
+ */
+export interface InjectedPayload {
+  /** The name of the parameter that was modified */
+  parameterName: string;
+  /** The payload value that was injected */
+  payloadValue: string;
+  /** Where the parameter was found (query, body, path, header, response) */
+  location: "query" | "body" | "path" | "header" | "response";
+}
+
+/**
  * Individual failing log entry for a vulnerability.
  *
  * Why: Represents a single HTTP request/response that triggered the vulnerability.
@@ -31,6 +46,12 @@ export interface FailingLog {
   statusCode: number;
   requestContent: string;
   responseContent: string;
+  /** Authentication role used for this request (e.g., "admin", "user") */
+  authRole?: string;
+  /** Authentication method used (e.g., "oauth2", "bearer") */
+  authMethod?: string;
+  /** Detected injected payloads that triggered the vulnerability */
+  injectedPayloads?: InjectedPayload[];
 }
 
 /**
@@ -44,12 +65,22 @@ export interface VulnerabilityDetail {
   category: string;
   severity: "Critical" | "High" | "Medium" | "Low" | "Info";
   cvssScore: number;
+  /** Detection status (e.g., Active/New/Reopened) if available */
+  status?: string;
   description: string;
   endpoint: string;
   method: string;
   detectionDate: Date;
   owaspTags: string[];
   failingLogs: FailingLog[];
+  /** APIsec detection ID for this vulnerability */
+  detectionId?: string;
+  /** Authentication role used when vulnerability was detected */
+  authRole?: string;
+  /** Authentication method used when vulnerability was detected */
+  authMethod?: string;
+  /** Detected injected payloads that triggered the vulnerability */
+  injectedPayloads?: InjectedPayload[];
 }
 
 /**
@@ -65,6 +96,19 @@ export interface EndpointGroup {
 }
 
 /**
+ * Summary of a scanned endpoint for the endpoints table.
+ *
+ * Why: Provides a quick overview of all endpoints tested during the scan.
+ */
+export interface EndpointSummary {
+  method: string;
+  endpoint: string;
+  vulnCount: number;
+  infoCount: number;
+  authStatus: "Yes" | "No" | "N/A";
+}
+
+/**
  * Complete data structure for PDF report generation.
  *
  * Why: Top-level container for all report data with validated types.
@@ -73,6 +117,7 @@ export interface EndpointGroup {
 export interface PDFReportData {
   scanId: string;
   status: string;
+  appName?: string;
   hostUrl?: string;
   generatedAt: Date;
   summary: VulnerabilitySummary;
@@ -82,6 +127,8 @@ export interface PDFReportData {
   informationalGroups: EndpointGroup[];
   /** @deprecated Use vulnerabilityGroups + informationalGroups instead */
   endpointGroups: EndpointGroup[];
+  /** Summary of all endpoints scanned for the endpoints table */
+  endpointSummaries: EndpointSummary[];
   metadata: {
     endpointsScanned: number;
     endpointsUnderTest: number;
