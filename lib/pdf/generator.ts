@@ -863,6 +863,7 @@ export class PDFReportGenerator {
     this.renderVulnerabilitySummaryTable(data);
     this.renderEndpointsScannedTable(data);
     this.renderFindings(data);
+    this.renderGlossary();
 
     // Populate the TOC on the cover page once we know section anchors.
     this.renderTableOfContentsOnCover(tocStartY);
@@ -901,7 +902,6 @@ export class PDFReportGenerator {
     // Metadata
     this.doc.setFontSize(FONT_SIZE_NORMAL);
     const metadata: [string, string][] = [
-      ["Scan ID:", data.scanId],
       ["Status:", data.status],
       ["Generated:", this.formatDate(data.generatedAt)],
     ];
@@ -989,7 +989,6 @@ export class PDFReportGenerator {
       [`Endpoints Scanned: ${data.metadata.endpointsScanned} / ${data.metadata.endpointsUnderTest}`],
       [`Total Tests: ${data.metadata.totalTests}`],
       [`Tests Passed: ${data.metadata.testsPassed}`],
-      [`Tests Failed: ${data.metadata.testsFailed}`],
       [`Total Findings: ${data.summary.total}`],
       [`Endpoints Affected: ${data.endpointGroups.length}`],
     ];
@@ -1347,6 +1346,16 @@ export class PDFReportGenerator {
       }
 
       this.renderSectionTitle("Informational Findings");
+
+      // Show Scan ID for informational findings (since they come from scan-specific data)
+      this.doc.setFontSize(FONT_SIZE_SMALL);
+      this.doc.setFont("helvetica", "bold");
+      this.doc.setTextColor(...COLORS.gray);
+      this.doc.text("Scan ID:", MARGIN, this.y);
+      this.doc.setFont("helvetica", "normal");
+      this.doc.setTextColor(...COLORS.black);
+      this.doc.text(data.scanId, MARGIN + 20, this.y);
+      this.y += LINE_HEIGHT;
 
       // Count total info findings
       const totalInfo = data.informationalGroups.reduce((sum, g) => sum + g.vulnerabilityCount, 0);
@@ -2558,5 +2567,130 @@ export class PDFReportGenerator {
       .split(/\s+/)
       .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
       .join(" ");
+  }
+
+  // ============ Glossary Section ============
+
+  private renderGlossary() {
+    // Start on a new page
+    this.doc.addPage();
+    this.y = MARGIN;
+
+    this.renderSectionTitle("Glossary");
+
+    const glossaryTerms: { term: string; definition: string }[] = [
+      // Report Metadata
+      {
+        term: "Status",
+        definition: "The completion state of the security scan (e.g., Complete, In Progress, Failed).",
+      },
+      // Scan Statistics
+      {
+        term: "Endpoints Scanned",
+        definition: "The number of API endpoints that were tested during the scan out of the total configured for testing.",
+      },
+      {
+        term: "Total Tests",
+        definition: "The total number of individual security test cases executed across all endpoints.",
+      },
+      {
+        term: "Tests Passed",
+        definition: "Tests that completed without detecting a security issue.",
+      },
+      {
+        term: "Total Findings",
+        definition: "The sum of all security vulnerabilities detected across all endpoints.",
+      },
+      {
+        term: "Endpoints Affected",
+        definition: "The count of unique API endpoints that have at least one security finding.",
+      },
+      // Severity Levels
+      {
+        term: "CVSS Score",
+        definition: "Common Vulnerability Scoring System - a standardized severity rating from 0.0 to 10.0.",
+      },
+      {
+        term: "Critical (CVSS 9.0-10.0)",
+        definition: "Vulnerabilities that can be easily exploited and may result in complete system compromise.",
+      },
+      {
+        term: "High (CVSS 7.0-8.9)",
+        definition: "Serious vulnerabilities that could lead to significant data exposure or system access.",
+      },
+      {
+        term: "Medium (CVSS 4.0-6.9)",
+        definition: "Moderate risk vulnerabilities that require specific conditions to exploit.",
+      },
+      {
+        term: "Low (CVSS 0.1-3.9)",
+        definition: "Minor vulnerabilities with limited impact or difficult exploitation.",
+      },
+      {
+        term: "Info (CVSS < 0.1)",
+        definition: "Informational findings that may indicate potential security concerns but are not exploitable vulnerabilities.",
+      },
+      // Finding Types
+      {
+        term: "Vulnerability",
+        definition: "A confirmed security weakness that failed a security test and poses a risk to the application.",
+      },
+      {
+        term: "Informational Finding",
+        definition: "An observation from passed tests that may be worth noting but does not represent an active security risk.",
+      },
+      // Detection Status
+      {
+        term: "Active",
+        definition: "A vulnerability that is currently present and has not been addressed.",
+      },
+      {
+        term: "Resolved",
+        definition: "A vulnerability that has been fixed and is no longer present.",
+      },
+      {
+        term: "False Positive",
+        definition: "A finding that was determined to not be an actual vulnerability after review.",
+      },
+    ];
+
+    this.doc.setFontSize(FONT_SIZE_SMALL);
+
+    for (const { term, definition } of glossaryTerms) {
+      // Check if we need a new page
+      if (this.y > PAGE_HEIGHT - 25) {
+        this.doc.addPage();
+        this.y = MARGIN;
+      }
+
+      // Term (bold)
+      this.doc.setFont("helvetica", "bold");
+      this.doc.setTextColor(...COLORS.black);
+      this.doc.text(term, MARGIN, this.y);
+
+      // Definition (normal, wrapped)
+      this.doc.setFont("helvetica", "normal");
+      this.doc.setTextColor(...COLORS.gray);
+
+      const termWidth = this.doc.getTextWidth(term);
+      const defX = MARGIN + termWidth + 4;
+      const maxDefWidth = PAGE_WIDTH - defX - MARGIN;
+
+      // Split long definitions into multiple lines
+      const lines = this.doc.splitTextToSize(definition, maxDefWidth);
+
+      // First line after term
+      if (lines.length > 0) {
+        this.doc.text(lines[0], defX, this.y);
+      }
+
+      // Remaining lines indented
+      for (let i = 1; i < lines.length; i++) {
+        this.y += LINE_HEIGHT - 1;
+        this.doc.text(lines[i], MARGIN + 4, this.y);
+      }
+
+      this.y += LINE_HEIGHT + 2;
+    }
   }
 }
